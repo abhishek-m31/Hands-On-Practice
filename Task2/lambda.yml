@@ -1,0 +1,49 @@
+description: Lambda function created 
+resources:
+   Type: AWS::Lambda::Function
+   Properties:
+      Handler: index.handler
+      Code: 
+        Zipfile: |
+          import boto3
+          import csv
+          import json
+
+          def lambda_handler(event, context):
+            try:
+                  #Get the S3 bucket and object key from the event
+                  bucket = event['Records'][0]['s3']['bucket']['name']
+                  key = event['Records'][0]['s3']['object']['key']
+            
+                  #Create S3 and DynamoDB clients
+                  s3 = boto3.client('s3')
+                  dynamodb = boto3.client('dynamodb')
+            
+                  #Get the CSV file from S3
+                  response = s3.get_object(Bucket=bucket, Key=key)
+                  lines = response['Body'].read().decode('utf-8').splitlines()
+            
+                  #Read the CSV file
+                  reader = csv.reader(lines)
+                  for row in reader:
+                      #Assuming the CSV has columns 'id', 'name', 'value'
+                      item = {
+                          'id': {'S': row[0]},
+                          'name': {'S': row[1]},
+                          'email': {'S': row[2]}
+                      }
+                      #Put item into DynamoDB table
+                      dynamodb.put_item(TableName='am-testtable1', Item=item)
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('CSV data successfully written to DynamoDB')
+                  }
+              
+            except Exception as e:
+                  print(f"Error: {e}")
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f"Error processing the file: {str(e)}")
+                  }
+

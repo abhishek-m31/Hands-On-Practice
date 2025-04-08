@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: dynamodb, s3 bucket created and lambda function
+Resources:
+  MyDynamoDBTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: 'MyTable'
+      AttributeDefinitions:
+        - AttributeName: 'id'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'id'
+          KeyType: 'HASH'
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  MyS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'my-upload-bucket'
+
+  MyLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'LambdaExecutionPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+              - Effect: 'Allow'
+                Action:
+                  - 'dynamodb:PutItem'
+                Resource: !GetAtt MyDynamoDBTable.Arn
+              - Effect: 'Allow'
+                Action:
+                  - 's3:GetObject'
+                Resource: 'arn:aws:s3:::my-upload-bucket/*'
+
+  MyLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'S3ToDynamoDB'
+      Handler: 'index.lambda_handler'
+      Role: !GetAtt MyLambdaExecutionRole.Arn
+      Runtime: 'python3.9'
+      Code:
+        ZipFile: |
+          import boto3
+          import csv
+          import json
+
+          def lambda_handler(event, context):
+              try:
+                  # Get the S3 bucket and object key from the event
+                  bucket = event['Records'][0]['s3']['bucket']['name']
+                  key = event['Records'][0]['s3']['object']['key']
+                  
+                  # Create S3 and DynamoDB clients
+                  s3 = boto3.client('s3')
+                  dynamodb = boto3.client('dynamodb')
+                  
+                  # Get the CSV file from S3
+                  response = s3.get_object(Bucket=bucket, Key=key)
+                  lines = response['Body'].read().decode('utf-8').splitlines()
+                  
+                  # Read the CSV file
+                  reader = csv.reader(lines)
+                  for row in reader:
+                      # Assuming the CSV has columns 'id', 'name', 'value'
+                      item = {
+                          'id': {'S': row[0]},
+                          'name': {'S': row[1]},
+                          'email': {'S': row[2]}
+                      }
+                      # Put item into DynamoDB table
+                      dynamodb.put_item(TableName='am-testtable1', Item=item)
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('CSV data successfully written to DynamoDB')
+                  }
+              
+              except Exception as e:
+                  print(f"Error: {e}")
+                  return {
+                      'statusCode': 500,`
+                      'body': json.dumps(f"Error processing the file: {str(e)}")
+                  }
+
+  S3BucketLambdaTrigger:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref MyLambdaFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 's3.amazonaws.com'
+      SourceArn: !GetAtt MyS3Bucket.Arn
+
+  S3BucketNotification:
+    Type: 'Custom::S3BucketNotification'
+    DependsOn: S3BucketLambdaTrigger
+    Properties:
+      ServiceToken: !GetAtt MyLambdaFunction.Arn
+      BucketName: !Ref MyS3Bucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt MyLambdaFunction.Arn

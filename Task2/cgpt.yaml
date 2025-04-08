@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  # S3 Bucket to upload the CSV files
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: your-csv-upload-bucket-name
+
+  # DynamoDB Table to store the records
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: YourDynamoDBTable
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  # Lambda Execution Role with permissions to access S3 and DynamoDB
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: LambdaS3DynamoDBPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource: arn:aws:s3:::your-csv-upload-bucket-name/*
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:BatchWriteItem'
+                Resource: arn:aws:dynamodb:your-region:your-account-id:table/YourDynamoDBTable
+
+  # Lambda Function to process the CSV file and update DynamoDB
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ProcessCSVToDynamoDB
+      Handler: lambda_function.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.8
+      Code:
+        S3Bucket: your-lambda-code-bucket
+        S3Key: lambda-code.zip
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTable
+
+  # S3 Bucket Notification to trigger Lambda on object upload
+  S3BucketNotification:
+    Type: AWS::S3::BucketNotification
+    Properties:
+      Bucket: !Ref S3Bucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt LambdaFunction.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: "Lambda Function ARN"
+    Value: !GetAtt LambdaFunction.Arn
+
+  S3BucketName:
+    Description: "S3 Bucket Name"
+    Value: !Ref S3Bucket
+
+  DynamoDBTableName:
+    Description: "DynamoDB Table Name"
+    Value: !Ref DynamoDBTable

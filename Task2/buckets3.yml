@@ -1,0 +1,5 @@
+Description: Create S3 bucket
+Resources:
+  MyS3bucket:
+    Type: AWS::S3::Bucket
+    Properties: {}

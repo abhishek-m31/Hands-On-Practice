@@ -1,0 +1,7 @@
+Description: Change name of S3 bucket
+Resources:
+  MyS3bucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      
+      BucketName: demo1-s3cloudormation

@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  MyDynamoDBTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: 'MyTable'
+      AttributeDefinitions:
+        - AttributeName: 'id'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'id'
+          KeyType: 'HASH'
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  MyS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: 'my-upload-bucket'
+
+  MyLambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service: 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: 'LambdaExecutionPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: 'arn:aws:logs:*:*:*'
+              - Effect: 'Allow'
+                Action:
+                  - 'dynamodb:PutItem'
+                Resource: !GetAtt MyDynamoDBTable.Arn
+              - Effect: 'Allow'
+                Action:
+                  - 's3:GetObject'
+                Resource: 'arn:aws:s3:::my-upload-bucket/*'
+
+  MyLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: 'S3ToDynamoDB'
+      Handler: 'index.lambda_handler'
+      Role: !GetAtt MyLambdaExecutionRole.Arn
+      Runtime: 'python3.9'
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table('MyTable')
+
+          def lambda_handler(event, context):
+              for record in event['Records']:
+                  bucket = record['s3']['bucket']['name']
+                  key = record['s3']['object']['key']
+                  
+                  s3 = boto3.client('s3')
+                  response = s3.get_object(Bucket=bucket, Key=key)
+                  content = response['Body'].read().decode('utf-8')
+                  
+                  data = json.loads(content)
+                  
+                  for item in data:
+                      table.put_item(Item=item)
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Data inserted successfully')
+              }
+
+  S3BucketLambdaTrigger:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref MyLambdaFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 's3.amazonaws.com'
+      SourceArn: !GetAtt MyS3Bucket.Arn
+
+  S3BucketNotification:
+    Type: 'Custom::S3BucketNotification'
+    DependsOn: S3BucketLambdaTrigger
+    Properties:
+      ServiceToken: !GetAtt MyLambdaFunction.Arn
+      BucketName: !Ref MyS3Bucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt MyLambdaFunction.Arn
